@@ -2,20 +2,15 @@ package ed25519consensus
 
 import (
 	"crypto/ed25519"
+	"fmt"
 	"testing"
-
-	"github.com/tendermint/tendermint/crypto"
 )
 
 func TestBatch(t *testing.T) {
-	// make a bunch of keys
-	// sign a distince message for each key
-	// create keysigs add them to an array of them
-	// call batch
 	v := NewVerifier()
-	for i := 0; i <= 10; i++ {
+	for i := 0; i <= 38; i++ {
 
-		pub, priv, _ := ed25519.GenerateKey(crypto.CReader())
+		pub, priv, _ := ed25519.GenerateKey(nil)
 
 		msg := []byte("BatchVerifyTest")
 
@@ -26,7 +21,27 @@ func TestBatch(t *testing.T) {
 		}
 	}
 
-	if !v.BatchVerify() {
+	if !v.VerifyBatch() {
 		t.Error("failed batch verification")
+	}
+}
+
+func BenchmarkVerifyBatch(b *testing.B) {
+	for _, n := range []int{1, 8, 64, 1024} {
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			b.ReportAllocs()
+			v := NewVerifier()
+			for i := 0; i < n; i++ {
+				pub, priv, _ := ed25519.GenerateKey(nil)
+				msg := []byte("BatchVerifyTest")
+				v.Add(pub, msg, ed25519.Sign(priv, msg))
+			}
+			// NOTE: dividing by n so that metrics are per-signature
+			for i := 0; i < b.N/n; i++ {
+				if !v.VerifyBatch() {
+					b.Fatal("signature set failed batch verification")
+				}
+			}
+		})
 	}
 }

@@ -3,7 +3,7 @@ package ed25519consensus
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"fmt"
+	"crypto/sha512"
 
 	"filippo.io/edwards25519"
 )
@@ -11,33 +11,26 @@ import (
 var B = edwards25519.NewGeneratorPoint()
 
 type Verifier struct {
-	signatures []ks
-	batchSize  uint32
+	entries   []ks
+	batchSize uint32
 }
 
 type ks struct {
-	pubkey     ed25519.PublicKey
-	signatures []sm
-}
-
-type sm struct {
-	signature signature
-	msg       []byte
+	pubkey    ed25519.PublicKey
+	signature []byte
 	k         *edwards25519.Scalar
 }
 
-type signature struct {
-	rBytes [32]byte // 0..32
-	sBytes [32]byte // 32..64
-}
-
+// NewVerifier creates a Verifier that entries of signatures, keys and messages
+// can be added to for verification
 func NewVerifier() Verifier {
 	return Verifier{
-		signatures: []ks{},
-		batchSize:  0,
+		entries:   []ks{},
+		batchSize: 0,
 	}
 }
 
+// Add adds an entry to the verifier and bumps the batch size.
 func (v *Verifier) Add(publicKey ed25519.PublicKey, sig, message []byte) bool {
 	if l := len(publicKey); l != ed25519.PublicKeySize {
 		return false
@@ -47,35 +40,30 @@ func (v *Verifier) Add(publicKey ed25519.PublicKey, sig, message []byte) bool {
 		return false
 	}
 
-	var (
-		rBytes [32]byte
-		sBytes [32]byte
-	)
-	copy(rBytes[:], sig[:32])
-	copy(sBytes[:], sig[32:64])
+	h := sha512.New()
+	h.Write(sig[:32])
+	h.Write(publicKey)
+	h.Write(message)
+	var digest [64]byte
+	h.Sum(digest[:0])
 
-	s := signature{
-		rBytes: rBytes,
-		sBytes: sBytes,
-	}
-
-	smS := sm{
-		signature: s,
-		msg:       message,
-	}
+	k := new(edwards25519.Scalar).SetUniformBytes(digest[:])
 
 	ksS := ks{
-		pubkey:     pk,
-		signatures: []sm{smS},
+		pubkey:    publicKey,
+		signature: sig,
+		k:         k,
 	}
 
+	v.entries = append(v.entries, ksS)
 	v.batchSize++
-	v.signatures[int(v.batchSize)] = ksS
 
 	return true
 }
 
-func (v *Verifier) BatchVerify() bool {
+// VerifyBatch batch verifies the keys, messages and signatures within the verifier.
+// If a failure arises it is unknown which key failed adn the caller must verify each entry individually
+func (v *Verifier) VerifyBatch() bool {
 	// The batch verification equation is
 	//
 	// [-sum(z_i * s_i)]B + sum([z_i]R_i) + sum([z_i * k_i]A_i) = 0.
@@ -86,74 +74,53 @@ func (v *Verifier) BatchVerify() bool {
 	// - k_i is the hash of the message and other data;
 	// - z_i is a random 128-bit Scalar.
 
-	var (
-		A_coeffs = make([]*edwards25519.Scalar, 0, v.batchSize)
-		R_coeffs []*edwards25519.Scalar
+	svals := make([]edwards25519.Scalar, 1+v.batchSize+v.batchSize)
+	scalars := make([]*edwards25519.Scalar, 1+v.batchSize+v.batchSize)
+	for i := range scalars {
+		scalars[i] = &svals[i]
+	}
 
-		As = make([]*edwards25519.Point, 0, v.batchSize)
-		Rs []*edwards25519.Point
-	)
+	Bcoeff := scalars[0]
+	Rcoeffs := scalars[1:][:int(v.batchSize)]
+	Acoeffs := scalars[1+v.batchSize:]
 
-	B_coeff := edwards25519.NewScalar()
+	pvals := make([]edwards25519.Point, 1+v.batchSize+v.batchSize)
+	points := make([]*edwards25519.Point, 1+v.batchSize+v.batchSize)
+	for i := range points {
+		points[i] = &pvals[i]
+	}
+	B := points[0]
+	Rs := points[1:][:v.batchSize]
+	As := points[1+v.batchSize:]
 
-	for i := 0; i < int(v.batchSize); i++ {
-		A, ok := Decompress(v.signatures[i].pubkey)
-		if !ok {
+	B.Set(edwards25519.NewGeneratorPoint())
+	for i, entry := range v.entries {
+		if _, err := Rs[i].SetBytes(entry.signature[:32]); err != nil {
 			return false
 		}
 
-		A_coeff := edwards25519.NewScalar()
-
-		for j := 0; j < len(v.signatures[i].signatures); j++ {
-
-			s, err := new(edwards25519.Scalar).SetCanonicalBytes(v.signatures[i].signatures[j].signature[32:])
-			if err != nil {
-				return false
-			}
-
-			buf := make([]byte, 32)
-			_, _ = rand.Read(buf[:16])
-			z, err := new(edwards25519.Scalar).SetCanonicalBytes(buf)
-			if err != nil {
-				return false
-			}
-
-			b, ok := Decompress(v.signatures[i].signatures[j].signature.rBytes[:])
-			if !ok {
-				return false
-			}
-
-			Rs = append(Rs, b)
-			R_coeffs = append(R_coeffs, z)
-
-			z.Multiply(z, v.signatures[i].signatures[j].k)
-			A_coeff.Add(z, A_coeff)
+		if _, err := As[i].SetBytes(entry.pubkey); err != nil {
+			return false
 		}
 
-		As = append(As, A)
-		A_coeffs = append(A_coeffs, A_coeff)
+		buf := make([]byte, 32)
+		rand.Read(buf[:16])
+		_, err := Rcoeffs[i].SetCanonicalBytes(buf)
+		if err != nil {
+			return false
+		}
+
+		s, err := new(edwards25519.Scalar).SetCanonicalBytes(entry.signature[32:])
+		if err != nil {
+			return false
+		}
+		Bcoeff.MultiplyAdd(Rcoeffs[i], s, Bcoeff)
+
+		Acoeffs[i].Multiply(Rcoeffs[i], entry.k)
 	}
-
-	var (
-		scalars []*edwards25519.Scalar
-		points  []*edwards25519.Point
-	)
-
-	points = append(points, B)
-	points = append(points, As...)
-	points = append(points, Rs...)
-
-	scalars = append(scalars, B_coeff)
-	scalars = append(scalars, A_coeffs...)
-	scalars = append(scalars, R_coeffs...)
+	Bcoeff.Negate(Bcoeff) // this term is subtracted in the summation
 
 	check := new(edwards25519.Point).VarTimeMultiScalarMult(scalars, points)
 	check.MultByCofactor(check)
-
-	fmt.Println(check, "check", edwards25519.NewIdentityPoint())
-	if check.Equal(edwards25519.NewIdentityPoint()) == 1 {
-		return true
-	} else {
-		return false
-	}
+	return check.Equal(edwards25519.NewIdentityPoint()) == 1
 }

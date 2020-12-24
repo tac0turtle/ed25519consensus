@@ -26,10 +26,12 @@ func Verify(publicKey ed25519.PublicKey, message, sig []byte) bool {
 	}
 
 	// ZIP215: this works because SetBytes does not check that encodings are canonical.
-	A, ok := Decompress(publicKey)
-	if !ok {
-		return ok
+	A, err := new(edwards25519.Point).SetBytes(publicKey)
+	if err != nil {
+		return false
 	}
+
+	A.Negate(A)
 
 	h := sha512.New()
 	h.Write(sig[:32])
@@ -61,17 +63,4 @@ func Verify(publicKey ed25519.PublicKey, message, sig []byte) bool {
 	p.MultByCofactor(p)
 
 	return p.Equal(edwards25519.NewIdentityPoint()) == 1 // p == 0
-}
-
-// Decompress conducts public key decompression on a compressed publickey
-func Decompress(publicKey ed25519.PublicKey) (*edwards25519.Point, bool) {
-
-	A, err := new(edwards25519.Point).SetBytes(publicKey)
-	if err != nil {
-		return nil, false
-	}
-
-	A.Negate(A)
-
-	return A, true
 }
