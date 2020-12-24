@@ -12,13 +12,8 @@ import (
 var B = edwards25519.NewGeneratorPoint()
 
 type Verifier struct {
-<<<<<<< HEAD
 	signatures []ks
 	batchSize  uint32
-=======
-	signatures map[int]ks
-	batchSize  uint
->>>>>>> cf773ee... api refactor
 }
 
 type ks struct {
@@ -27,14 +22,9 @@ type ks struct {
 }
 
 type sm struct {
-<<<<<<< HEAD
 	signature signature
 	msg       []byte
 	k         *edwards25519.Scalar
-=======
-	signature Signature
-	msg       []byte
->>>>>>> cf773ee... api refactor
 }
 
 type signature struct {
@@ -44,22 +34,13 @@ type signature struct {
 
 func NewVerifier() Verifier {
 	return Verifier{
-<<<<<<< HEAD
 		signatures: []ks{},
-=======
-		signatures: make(map[int]ks),
->>>>>>> cf773ee... api refactor
 		batchSize:  0,
 	}
 }
 
-<<<<<<< HEAD
 func (v *Verifier) Add(publicKey ed25519.PublicKey, sig, message []byte) bool {
 	if l := len(publicKey); l != ed25519.PublicKeySize {
-=======
-func (v *Verifier) Add(pk ed25519.PublicKey, sig, message []byte) bool {
-	if len(sig) != ed25519.SignatureSize {
->>>>>>> cf773ee... api refactor
 		return false
 	}
 
