@@ -3,7 +3,6 @@ package ed25519consensus
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha512"
 	"fmt"
 
 	"filippo.io/edwards25519"
@@ -88,10 +87,10 @@ func (v *Verifier) BatchVerify() bool {
 	// - z_i is a random 128-bit Scalar.
 
 	var (
-		A_coeffs []*edwards25519.Scalar
+		A_coeffs = make([]*edwards25519.Scalar, 0, v.batchSize)
 		R_coeffs []*edwards25519.Scalar
 
-		As []*edwards25519.Point
+		As = make([]*edwards25519.Point, 0, v.batchSize)
 		Rs []*edwards25519.Point
 	)
 
@@ -107,17 +106,17 @@ func (v *Verifier) BatchVerify() bool {
 
 		for j := 0; j < len(v.signatures[i].signatures); j++ {
 
-			s, err := edwards25519.NewScalar().SetCanonicalBytes(v.signatures[i].signatures[j].signature.sBytes[:])
+			s, err := new(edwards25519.Scalar).SetCanonicalBytes(v.signatures[i].signatures[j].signature[32:])
 			if err != nil {
 				return false
 			}
 
-			buf := make([]byte, 64)
-			_, _ = rand.Read(buf) //todo: check error
-
-			z := edwards25519.NewScalar().SetUniformBytes(buf)
-			z.Multiply(z, s)
-			B_coeff.Subtract(B_coeff, z)
+			buf := make([]byte, 32)
+			_, _ = rand.Read(buf[:16])
+			z, err := new(edwards25519.Scalar).SetCanonicalBytes(buf)
+			if err != nil {
+				return false
+			}
 
 			b, ok := Decompress(v.signatures[i].signatures[j].signature.rBytes[:])
 			if !ok {
@@ -127,16 +126,8 @@ func (v *Verifier) BatchVerify() bool {
 			Rs = append(Rs, b)
 			R_coeffs = append(R_coeffs, z)
 
-			var bz []byte
-			h := sha512.New()
-			h.Write(v.signatures[i].signatures[j].signature.rBytes[:][:])
-			h.Write(v.signatures[i].pubkey)
-			h.Write(v.signatures[i].signatures[j].msg[:])
-			bz = h.Sum(bz)
-
-			k := edwards25519.NewScalar().SetUniformBytes(bz)
-
-			A_coeff.MultiplyAdd(z, k, A_coeff)
+			z.Multiply(z, v.signatures[i].signatures[j].k)
+			A_coeff.Add(z, A_coeff)
 		}
 
 		As = append(As, A)
@@ -157,11 +148,7 @@ func (v *Verifier) BatchVerify() bool {
 	scalars = append(scalars, R_coeffs...)
 
 	check := new(edwards25519.Point).VarTimeMultiScalarMult(scalars, points)
-
-	// todo: replace with MulByCofactor when added to fillipo's lib
-	check.Add(check, check)
-	check.Add(check, check)
-	check.Add(check, check)
+	check.MultByCofactor(check)
 
 	fmt.Println(check, "check", edwards25519.NewIdentityPoint())
 	if check.Equal(edwards25519.NewIdentityPoint()) == 1 {
