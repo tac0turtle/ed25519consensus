@@ -12,8 +12,13 @@ import (
 var B = edwards25519.NewGeneratorPoint()
 
 type Verifier struct {
+<<<<<<< HEAD
 	signatures []ks
 	batchSize  uint32
+=======
+	signatures map[int]ks
+	batchSize  uint
+>>>>>>> cf773ee... api refactor
 }
 
 type ks struct {
@@ -22,9 +27,14 @@ type ks struct {
 }
 
 type sm struct {
+<<<<<<< HEAD
 	signature signature
 	msg       []byte
 	k         *edwards25519.Scalar
+=======
+	signature Signature
+	msg       []byte
+>>>>>>> cf773ee... api refactor
 }
 
 type signature struct {
@@ -34,13 +44,22 @@ type signature struct {
 
 func NewVerifier() Verifier {
 	return Verifier{
+<<<<<<< HEAD
 		signatures: []ks{},
+=======
+		signatures: make(map[int]ks),
+>>>>>>> cf773ee... api refactor
 		batchSize:  0,
 	}
 }
 
+<<<<<<< HEAD
 func (v *Verifier) Add(publicKey ed25519.PublicKey, sig, message []byte) bool {
 	if l := len(publicKey); l != ed25519.PublicKeySize {
+=======
+func (v *Verifier) Add(pk ed25519.PublicKey, sig, message []byte) bool {
+	if len(sig) != ed25519.SignatureSize {
+>>>>>>> cf773ee... api refactor
 		return false
 	}
 
@@ -60,28 +79,18 @@ func (v *Verifier) Add(publicKey ed25519.PublicKey, sig, message []byte) bool {
 		sBytes: sBytes,
 	}
 
-	h := sha512.New()
-	h.Write(sig[:32])
-	h.Write(publicKey[:])
-	h.Write(message)
-	var bz [64]byte
-	h.Sum(bz[:0])
-
-	k := edwards25519.NewScalar().SetUniformBytes(bz[:])
-
 	smS := sm{
 		signature: s,
 		msg:       message,
-		k:         k,
 	}
 
 	ksS := ks{
-		pubkey:     publicKey,
+		pubkey:     pk,
 		signatures: []sm{smS},
 	}
 
-	v.signatures = append(v.signatures, ksS)
 	v.batchSize++
+	v.signatures[int(v.batchSize)] = ksS
 
 	return true
 }
@@ -129,15 +138,24 @@ func (v *Verifier) BatchVerify() bool {
 			z.Multiply(z, s)
 			B_coeff.Subtract(B_coeff, z)
 
-			R, ok := Decompress(v.signatures[i].signatures[j].signature.rBytes[:])
+			b, ok := Decompress(v.signatures[i].signatures[j].signature.rBytes[:])
 			if !ok {
 				return false
 			}
 
-			Rs = append(Rs, R)
+			Rs = append(Rs, b)
 			R_coeffs = append(R_coeffs, z)
 
-			A_coeff.MultiplyAdd(z, v.signatures[i].signatures[j].k, A_coeff)
+			var bz []byte
+			h := sha512.New()
+			h.Write(v.signatures[i].signatures[j].signature.rBytes[:][:])
+			h.Write(v.signatures[i].pubkey)
+			h.Write(v.signatures[i].signatures[j].msg[:])
+			bz = h.Sum(bz)
+
+			k := edwards25519.NewScalar().SetUniformBytes(bz)
+
+			A_coeff.MultiplyAdd(z, k, A_coeff)
 		}
 
 		As = append(As, A)
