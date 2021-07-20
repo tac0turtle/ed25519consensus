@@ -13,6 +13,6 @@ jobs:
       - name: test & coverage report creation
         run: |
           go test -mod=readonly -timeout 8m -race -coverprofile=coverage.txt -covermode=atomic
-      - uses: codecov/codecov-action@v1.0.15
+      - uses: codecov/codecov-action@v2.0.1
         with:
           file: ./coverage.txt
